@@ -23,19 +23,15 @@ export class Main {
         };
     }
 
-    // add for the test example purpose
-    public helloWorld(): string {
-        return "hello world";
-    }
-
     private startLoadingAssets(): void {
         const loader: PIXI.Loader = PIXI.Loader.shared;
+
         loader.add("rabbit", rabbitImage);
         loader.add("snake", snakeImage);
         loader.add("tileGrass", lowPolyGrass);
         loader.add("spriteExample", "./spritesData.json"); // example of loading spriteSheet
-
-        loader.on("complete", (): void => {
+        loader.onComplete.add((): void => {
+            console.log('complete');
             this.onAssetsLoaded();
         });
 
@@ -44,6 +40,7 @@ export class Main {
 
     private onAssetsLoaded(): void {
         this.createRenderer();
+
 
         const stage: PIXI.Container = this.app!.stage;
 
@@ -56,15 +53,22 @@ export class Main {
 
         const controller: IController = new JoyStick();
 
-        controller.subscribe(function(vector: ControlVector) {
-            snake.moveDirection(vector);
+        controller.subscribe(function (vector: ControlVector) {
+            // console.log('vector', vector);
+            // snake.direction = vector;
+            snake.directionSet = vector;
+        });
+
+        this.app.ticker.add(data => {
+            snake.move();
+            // console.log("app ticker", data);
         });
     }
 
     private createRenderer(): void {
         this.app = new PIXI.Application({
             backgroundColor: 0xf3f3f3,
-            antialias: false
+            antialias: false,
         });
 
         document.body.appendChild(this.app.view);
@@ -76,7 +80,7 @@ export class Main {
             worldHeight: 9000,
 
             // the interaction module is important for wheel to work properly when renderer.view is placed or scaled
-            interaction: this.app.renderer.plugins.interaction, 
+            interaction: this.app.renderer.plugins.interaction,
         });
         this.app!.stage.addChild(this.viewport);
 
@@ -120,6 +124,7 @@ export class Main {
     }
 
     private makeEndMarkers(): void {
+        console.log("makeEndMarkers");
         const height = this.viewport!.worldHeight;
         const width = this.viewport!.worldWidth;
         const pointSize = 100;

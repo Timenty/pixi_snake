@@ -17,9 +17,12 @@
     "author": "jkanchelov",
     "license": "MIT",
     "dependencies": {
+        "gamepad.js": "github:neogeek/gamepad.js",
+        "joypad.js": "^2.2.5",
         "nipplejs": "^0.8.5",
         "pixi-viewport": "^4.10.0",
-        "pixi.js": "^5.2.1"
+        "pixi.js": "^5.2.1",
+        "uncaught": "0.0.5"
     },
     "devDependencies": {
         "@types/jest": "^25.1.2",

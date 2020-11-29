@@ -1,5 +1,3 @@
 export class Player {
-    constructor(parameters) {
-        
-    }
+    constructor(parameters) {}
 }
