@@ -16,10 +16,10 @@ export class JoyStick implements Controller {
                 axisMovementThreshold: 0.2
             });
             const { id } = e.gamepad;
-            console.log(`${id} connected!`);
+            // console.log(`${id} connected!`);
             joypad.on('button_press', (e: any) => {
                 const { buttonName } = e.detail;
-                console.log(`${buttonName} was pressed!`);
+                // console.log(`${buttonName} was pressed!`);
             });
             joypad.on('axis_move', (e: any) => {
                 const { axes } = e.detail.gamepad;
@@ -54,10 +54,10 @@ export class JoyStick implements Controller {
         // this.manager.on("end", this.firing.bind(this));
         this.manager.on("move", (_, event): void => {
             // console.log(`force: ${event.force}`);
-            console.log(`${event.vector.x} ${event.vector.y}`);
+            // console.log(`${event.vector.x} ${event.vector.y}`);
             this.firing(_, event);
         });
-        console.log("Joystick manager", this.manager);
+        // console.log("Joystick manager", this.manager);
         this.manager.on("end", (_, event): void => {
             // console.log(`firing on end`, event);
             this.fireStop();

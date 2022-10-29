@@ -23,7 +23,6 @@ export class Main {
     private startLoadingAssets(): void {
         const loader: PIXI.Loader = PIXI.Loader.shared;
 
-        // loader.add("rabbit", rabbitImage);
         loader.add("snake", snakeImage);
         loader.add("tileGrass", lowPolyGrass);
         // loader.add("spriteExample", "./spritesData.json"); // example of loading spriteSheet
@@ -45,7 +44,7 @@ export class Main {
         snake.model.x = 2000;
         snake.model.y = 2000;
 
-        console.log(snake);
+        // console.log(snake);
 
         this.viewport?.addChild(snake.model);
 
@@ -81,7 +80,7 @@ export class Main {
             antialias: false,
         });
 
-        console.log('app', this.app);
+        // console.log('app', this.app);
         document.body.appendChild(this.app.view);
 
         this.viewport = new Viewport({
@@ -89,12 +88,13 @@ export class Main {
             screenHeight: window.innerHeight,
             worldWidth: 9000,
             worldHeight: 9000,
-
             // the interaction module is important for wheel to work properly when renderer.view is placed or scaled
             interaction: this.app.renderer.plugins.interaction,
         });
-        console.log('this.viewport', this.viewport);
-        console.log('this.app.renderer', this.app.renderer);
+        this.viewport.setZoom(0.25)
+
+        // console.log('this.viewport', this.viewport);
+        // console.log('this.app.renderer', this.app.renderer);
         this.app!.stage.addChild(this.viewport);
 
         const background: PIXI.TilingSprite = new PIXI.TilingSprite(
@@ -108,10 +108,11 @@ export class Main {
 
         this.viewport.addChild(background);
 
-        this.viewport
-            .drag()
-            .pinch()
-            .wheel()
+        // возможно нужны будут следующие настройки, а может выпилить
+        // this.viewport
+            // .drag()
+            // .pinch()
+            // .wheel()
             // Настройки во время игры
             // .clampZoom({
             //     minHeight: 650,
@@ -121,7 +122,6 @@ export class Main {
             // })
             // .bounce()
             // .decelerate();
-        this.viewport.setZoom(0.25)
         // this.app.renderer.resize(window.innerWidth, window.innerHeight);
         window.addEventListener("resize", this.onResize.bind(this));
 

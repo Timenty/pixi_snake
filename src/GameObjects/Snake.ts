@@ -61,8 +61,6 @@ export class Snake {
             );
 
             if (distance >= this.sectionLength) {
-                // console.log(`distance : ${distance} >= ${this.sectionLength} for ${index}`);
-
                 const vector: PIXI.Point = logic.vector(point, LastPoint);
                 const moveDistance: PIXI.Point = logic.pointABS(vector);
 
