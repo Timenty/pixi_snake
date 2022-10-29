@@ -8,7 +8,7 @@ export class Snake {
     private speed = 10;
     private sections = 20;
     private sectionLength = 20;
-    private direction: ControlVector; 
+    private direction!: ControlVector; 
 
     constructor() {
         // this.ropeLength = PIXI.Texture.from("snake").width / this.sections;

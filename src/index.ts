@@ -45,8 +45,8 @@ export class Main {
         const stage: PIXI.Container = this.app!.stage;
 
         const snake: Snake = new Snake();
-        snake.model.x = 1000;
-        snake.model.y = 1000;
+        snake.model.x = 2000;
+        snake.model.y = 2000;
         console.log(snake);
 
         this.viewport?.addChild(snake.model);
@@ -61,8 +61,16 @@ export class Main {
 
         this.app.ticker.add(data => {
             snake.move();
-            // console.log("app ticker", data);
+            const { x, y } = snake.head;
+            this.viewport?.follow({
+                x: x + 2000,
+                y: y + 2000
+            }, {
+                speed: 20,
+                radius: 150,
+            });
         });
+        
     }
 
     private createRenderer(): void {
@@ -82,6 +90,8 @@ export class Main {
             // the interaction module is important for wheel to work properly when renderer.view is placed or scaled
             interaction: this.app.renderer.plugins.interaction,
         });
+        console.log('this.viewport', this.viewport);
+        console.log('this.app.renderer', this.app.renderer);
         this.app!.stage.addChild(this.viewport);
 
         const background: PIXI.TilingSprite = new PIXI.TilingSprite(
@@ -108,7 +118,7 @@ export class Main {
             // })
             .bounce()
             .decelerate();
-
+        this.viewport.setZoom(0.25)
         this.app.renderer.resize(window.innerWidth, window.innerHeight);
         window.addEventListener("resize", this.onResize.bind(this));
 
