@@ -19,7 +19,7 @@ export class Snake {
     private calculatePoints(): Array<PIXI.Point> {
         const array = [];
         for (let i = 0; i < this.sections; i++) {
-            array[i] = new PIXI.Point(i * this.sections, 0);
+            array[i] = new PIXI.Point(i * (this.sections + this.sectionLength), 0);
         }
 
         return array;

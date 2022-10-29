@@ -35,10 +35,10 @@ export class JoyStick implements Controller {
                 if(newEv.force > 1.2)
                     newEv.force = 1.2;
 
-                console.log(`joypad force`, newEv.force);
+                // console.log(`joypad force`, newEv.force);
                 this.firing(null, newEv);
             });
-            console.log(joypad);
+            // console.log(joypad);
         });
 
         
@@ -75,7 +75,7 @@ export class JoyStick implements Controller {
     // private firing(_: nipplejs.EventData, event: nipplejs.JoystickOutputData): void {
     private firing(_: any, event: any): void {
         // console.log(`firing `, event);
-        console.log(`firing `, event.force);
+        // console.log(`firing `, event.force);
         if (event.force < 0.5) return;
         const force: number = event.force > 2.5 ? 2.5 : event.force < 0.5 ? 0.5 : event.force;
         // console.log('event vector', event);

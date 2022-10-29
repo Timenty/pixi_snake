@@ -11,9 +11,6 @@ import { ControlVector } from "./ObjectTypes/ControlVector";
 import { Controller as IController } from "./Controls/IController";
 
 export class Main {
-    private static readonly GAME_WIDTH: number = 800;
-    private static readonly GAME_HEIGHT: number = 600;
-
     private app: PIXI.Application | undefined;
     private viewport: Viewport | undefined;
 
@@ -26,10 +23,10 @@ export class Main {
     private startLoadingAssets(): void {
         const loader: PIXI.Loader = PIXI.Loader.shared;
 
-        loader.add("rabbit", rabbitImage);
+        // loader.add("rabbit", rabbitImage);
         loader.add("snake", snakeImage);
         loader.add("tileGrass", lowPolyGrass);
-        loader.add("spriteExample", "./spritesData.json"); // example of loading spriteSheet
+        // loader.add("spriteExample", "./spritesData.json"); // example of loading spriteSheet
         loader.onComplete.add((): void => {
             console.log('complete');
             this.onAssetsLoaded();
@@ -47,6 +44,7 @@ export class Main {
         const snake: Snake = new Snake();
         snake.model.x = 2000;
         snake.model.y = 2000;
+
         console.log(snake);
 
         this.viewport?.addChild(snake.model);
@@ -74,11 +72,16 @@ export class Main {
     }
 
     private createRenderer(): void {
+        PIXI.settings.RESOLUTION = window.devicePixelRatio || 1;
+
         this.app = new PIXI.Application({
+            resizeTo: window,
+            autoDensity: true, // Handles high DPI screens
             backgroundColor: 0xf3f3f3,
             antialias: false,
         });
 
+        console.log('app', this.app);
         document.body.appendChild(this.app.view);
 
         this.viewport = new Viewport({
@@ -116,10 +119,10 @@ export class Main {
             //     maxWidth: 2200,
             //     maxHeight: 2200,
             // })
-            .bounce()
-            .decelerate();
+            // .bounce()
+            // .decelerate();
         this.viewport.setZoom(0.25)
-        this.app.renderer.resize(window.innerWidth, window.innerHeight);
+        // this.app.renderer.resize(window.innerWidth, window.innerHeight);
         window.addEventListener("resize", this.onResize.bind(this));
 
         this.makeEndMarkers();
