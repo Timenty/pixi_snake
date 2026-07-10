@@ -1,13 +1,13 @@
 import * as PIXI from "pixi.js";
 
 const MAP_SIZE = 1024; // разрешение карты влажности (пятна мягкие, хватает)
-const MAX_DARK = 0.5; // предел потемнения почвы (alpha оверлея)
+const MAX_DARK = 0.5; // предел потемнения от одной капли (масштаб альфы штампа)
 const FADE_PERIOD = 30; // тиков между проходами «высыхания»
-const DRY_ERASE = 0.05; // сколько стираем за проход в сухую погоду (~35с до сухого)
+const DRY_ADD = 0.012; // возврат светлости за проход в сухую погоду (~20с до сухого)
 // Под дождём тоже понемногу «подсыхает»: равновесие спавна и стирания
 // держит покрытие частичным — земля остаётся пятнистой, а не заливается
 // ровной пеленой на весь экран.
-const RAIN_ERASE = 0.012;
+const RAIN_ADD = 0.004;
 
 // Мягкое пятно: радиальный градиент, чёрный центр → прозрачный край.
 function makeBlobTexture(): PIXI.Texture {
@@ -26,18 +26,22 @@ function makeBlobTexture(): PIXI.Texture {
 }
 
 /**
- * Локальная влажность почвы. Карта — RenderTexture на весь мир:
- * каждая упавшая капля штампует в неё мягкое пятно (альфа копится и
- * насыщается → темнее предела не станет), а оверлей-спрайт растянут на мир
- * и затемняет траву там, где карта непрозрачна.
- * Высыхание — периодический полный проход с blend ERASE: альфа всей карты
- * умножается на (1-x) → пятна постепенно тают, в сухую погоду быстрее.
+ * Локальная влажность почвы. Карта — RenderTexture «светлости» земли на весь
+ * мир: белое = сухо, тёмное = мокро.
+ *
+ * Все операции — только на батчевых blend-режимах PIXI v8 (normal, add,
+ * multiply, screen): режимы вроде 'erase' на прямых render({target}) проходах
+ * не применяются (идут через blend-фильтры, которым нужен обычный scene graph).
+ *  - капля: чёрный blob с blend 'multiply' → dst *= (1 - alpha), пятно темнеет;
+ *  - высыхание: белый квад с blend 'add' → светлость линейно возвращается;
+ *  - оверлей: спрайт карты с blend 'multiply' поверх земли — белое не меняет
+ *    картинку, тёмные пятна затемняют почву.
  */
 export class WetGround {
     public readonly overlay: PIXI.Sprite;
     private map: PIXI.RenderTexture;
     private stamp: PIXI.Sprite;
-    private eraser: PIXI.Sprite;
+    private dryQuad: PIXI.Sprite;
     private fadeT = 0;
     private rainCarry = 0; // дробный остаток виртуальных капель
     private toMapX: number; // мировые координаты → пиксели карты
@@ -55,20 +59,28 @@ export class WetGround {
         this.overlay = new PIXI.Sprite(this.map);
         this.overlay.width = worldWidth;
         this.overlay.height = worldHeight;
-        this.overlay.alpha = MAX_DARK;
-        this.overlay.interactive = false;
+        this.overlay.blendMode = "multiply";
+        this.overlay.eventMode = "none";
 
         this.stamp = new PIXI.Sprite(makeBlobTexture());
         this.stamp.anchor.set(0.5);
+        this.stamp.blendMode = "multiply";
 
-        this.eraser = new PIXI.Sprite(PIXI.Texture.WHITE);
-        this.eraser.width = MAP_SIZE;
-        this.eraser.height = MAP_SIZE;
-        this.eraser.blendMode = PIXI.BLEND_MODES.ERASE;
+        this.dryQuad = new PIXI.Sprite(PIXI.Texture.WHITE);
+        this.dryQuad.width = MAP_SIZE;
+        this.dryQuad.height = MAP_SIZE;
+        this.dryQuad.blendMode = "add";
+
+        // Старт: полностью сухая (белая) карта. Свежая RenderTexture не
+        // обязана быть чистой — заливаем явно обычным блендом.
+        this.dryQuad.blendMode = "normal";
+        this.dryQuad.alpha = 1;
+        this.renderer.render({ container: this.dryQuad, target: this.map, clear: true });
+        this.dryQuad.blendMode = "add";
     }
 
     // Карта влажности как текстура — шейдер земли берёт из неё локальный
-    // «мокрый блик» (см. GroundLighting.wetMap).
+    // «мокрый блик»: wet = 1 - r (см. GroundLighting.wetMap).
     public get texture(): PIXI.Texture {
         return this.map;
     }
@@ -76,21 +88,20 @@ export class WetGround {
     // Капля упала в (x, y) мира — почва там чуть темнеет.
     public addWet(x: number, y: number): void {
         this.stamp.position.set(x * this.toMapX, y * this.toMapY);
-        // Штамп достаточно плотный, чтобы ОДНА капля была видна глазом
-        // (потемнение в центре ~0.2 от MAX_DARK), но пятна остаются кляксами.
         // Размер с квадратичным разбросом: мелочь 60px часто, лужи до ~360px редко.
         const px = (60 + Math.pow(Math.random(), 2) * 300) * this.toMapX;
         this.stamp.width = px;
         this.stamp.height = px;
-        this.stamp.alpha = 0.55 + Math.random() * 0.25;
-        this.renderer.render(this.stamp, this.map, false);
+        // multiply: dst *= (1 - a) → затемнение центра ~28-40% за каплю
+        this.stamp.alpha = (0.55 + Math.random() * 0.25) * MAX_DARK;
+        this.renderer.render({ container: this.stamp, target: this.map, clear: false });
     }
 
     // «Виртуальный дождь»: пока льёт, мокнет ВСЯ карта, а не только видимая
     // область — уехав в другой край мира, застанешь его уже мокрым.
     // Видимые капли у камеры — чистая косметика, влагу кладёт этот метод.
     // 7.5 штампов/тик при интенсивности 1 ≈ той же плотности, что у видимых
-    // капель на экран, но размазанной по миру 9000×9000.
+    // капель на экран, но размазанной по миру.
     public rainOverWorld(delta: number, intensity: number): void {
         this.rainCarry += intensity * 7.5 * delta;
         while (this.rainCarry >= 1) {
@@ -104,7 +115,7 @@ export class WetGround {
         this.fadeT += delta;
         if (this.fadeT < FADE_PERIOD) return;
         this.fadeT = 0;
-        this.eraser.alpha = drying ? DRY_ERASE : RAIN_ERASE;
-        this.renderer.render(this.eraser, this.map, false);
+        this.dryQuad.alpha = drying ? DRY_ADD : RAIN_ADD;
+        this.renderer.render({ container: this.dryQuad, target: this.map, clear: false });
     }
 }

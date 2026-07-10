@@ -195,7 +195,7 @@ function makeBodyTexture(opts: SkinOptions): PIXI.Texture {
     shade(ctx, BODY_W, BODY_H); // затенение поверх узора — узор «вживлён» в кожу
 
     const tex = PIXI.Texture.from(canvas);
-    tex.baseTexture.wrapMode = PIXI.WRAP_MODES.REPEAT;
+    tex.source.style.addressMode = "repeat";
     return tex;
 }
 

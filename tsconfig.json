@@ -1,11 +1,14 @@
 {
     "compilerOptions": {
-        "target": "esnext",
-        "module": "CommonJS" /* Specify module code generation: 'none', 'commonjs', 'amd', 'system', 'umd', 'es2015', or 'ESNext'. */,
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
         "strict": true,
-        "esModuleInterop": true
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "useDefineForClassFields": true,
+        "noEmit": true,
+        "types": []
     },
-    "include": [
-        "./src/index.ts", "./types/*.d.ts"
-    ]
+    "include": ["./src/**/*.ts", "./types/*.d.ts"]
 }

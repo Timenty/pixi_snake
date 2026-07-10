@@ -24,7 +24,7 @@ function shineTexture(): PIXI.Texture {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     shineTexCache = PIXI.Texture.from(canvas);
-    shineTexCache.baseTexture.wrapMode = PIXI.WRAP_MODES.REPEAT;
+    shineTexCache.source.style.addressMode = "repeat";
     return shineTexCache;
 }
 
@@ -173,8 +173,11 @@ export class Snake {
             if (i === 0) color = 0x00ff00; // голова
             else if (i < this.headSkip) color = 0x888888; // пропускается
 
-            g.lineStyle(3, color, 0.9);
-            g.drawCircle(p.x, p.y, this.segmentRadius(i));
+            g.circle(p.x, p.y, this.segmentRadius(i)).stroke({
+                width: 3,
+                color,
+                alpha: 0.9,
+            });
         }
     }
 
@@ -213,7 +216,7 @@ export class Snake {
             1, // тайлится вдоль тела как узор
             this.ropeProfile(0, this.renderPoints.length)
         );
-        this.shineRope.blendMode = PIXI.BLEND_MODES.ADD;
+        this.shineRope.blendMode = "add";
         this.shineRope.alpha = this.wetness * 0.55;
         this.group.addChild(this.shineRope); // поверх головы и тела
     }

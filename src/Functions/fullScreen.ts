@@ -1,11 +1,13 @@
+// Вендорные префиксы не описаны в стандартных типах — берём через any.
 function fullScreen(element: HTMLElement) {
-    if(element.requestFullscreen) {
-      element.requestFullscreen();
-    } else if(element.webkitrequestFullscreen) {
-      element.webkitRequestFullscreen();
-    } else if(element.mozRequestFullscreen) {
-      element.mozRequestFullScreen();
+    const el = element as any;
+    if (el.requestFullscreen) {
+        el.requestFullscreen();
+    } else if (el.webkitRequestFullscreen) {
+        el.webkitRequestFullscreen();
+    } else if (el.mozRequestFullScreen) {
+        el.mozRequestFullScreen();
     }
 }
 
-export { fullScreen as fullScreen }
+export { fullScreen as fullScreen };

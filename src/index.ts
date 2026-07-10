@@ -1,7 +1,6 @@
 import * as PIXI from "pixi.js";
 import { Viewport } from "pixi-viewport";
 
-import rabbitImage from "./assets/rabbit.png";
 import lowPolyGrass from "./assets/background/low_poly_grass.png";
 import sandColorJpg from "./assets/background/sand_color.jpg";
 import sandNormalJpg from "./assets/background/sand_normal.jpg";
@@ -39,31 +38,18 @@ export class Main {
     // Создаётся в createRenderer: карта влажности нужна шейдеру песка (блик).
     private wetGround: WetGround | undefined;
 
-    constructor() {
-        window.onload = (): void => {
-            this.startLoadingAssets();
-        };
+    public async start(): Promise<void> {
+        await PIXI.Assets.load([
+            { alias: "tileGrass", src: lowPolyGrass },
+            { alias: "tileSand", src: sandColorJpg },
+            { alias: "sandNormal", src: sandNormalJpg },
+            { alias: "sandRough", src: sandRoughJpg },
+        ]);
+        await this.createRenderer();
+        this.buildGame();
     }
 
-    private startLoadingAssets(): void {
-        const loader: PIXI.Loader = PIXI.Loader.shared;
-
-        loader.add("tileGrass", lowPolyGrass);
-        loader.add("tileSand", sandColorJpg);
-        loader.add("sandNormal", sandNormalJpg);
-        loader.add("sandRough", sandRoughJpg);
-        // loader.add("spriteExample", "./spritesData.json"); // example of loading spriteSheet
-        loader.onComplete.add((): void => {
-            console.log('complete');
-            this.onAssetsLoaded();
-        });
-
-        loader.load();
-    }
-
-    private onAssetsLoaded(): void {
-        this.createRenderer();
-
+    private buildGame(): void {
         const stage: PIXI.Container = this.app!.stage;
         const viewport = this.viewport!;
 
@@ -100,14 +86,14 @@ export class Main {
         // поверх змейки и еды): дождь привязан к поверхности, а не к камере.
         // Начальное состояние можно задать через ?weather=sunny|overcast|sunshower.
         const clouds = new CloudShadows(viewport.worldWidth, viewport.worldHeight);
-        viewport.addChild(clouds.mesh as unknown as PIXI.DisplayObject);
+        viewport.addChild(clouds.mesh);
         // Тестовая роща: статичные тени крон в нижнем левом углу ТРАВЯНОЙ части
         // (левее — песок, там кронам не место).
         // Меш имеет внутренний запас 1000px — позицию сдвигаем с его учётом.
         const TREES_SIZE = 2600;
         const trees = new TreeShadows(TREES_SIZE, TREES_SIZE);
         trees.mesh.position.set(SAND_WIDTH - 1000, viewport.worldHeight - TREES_SIZE - 1000);
-        viewport.addChild(trees.mesh as unknown as PIXI.DisplayObject);
+        viewport.addChild(trees.mesh);
 
         const rain = new Rain();
         viewport.addChild(rain.container); // капли над тенями облаков
@@ -117,7 +103,7 @@ export class Main {
         // Мокрая почва (создана в createRenderer): тёмные пятна там, куда
         // упали капли. Слой сразу над землёй (index 1), под змейкой/едой.
         const wetGround = this.wetGround!;
-        viewport.addChildAt(wetGround.overlay as unknown as PIXI.DisplayObject, 1);
+        viewport.addChildAt(wetGround.overlay, 1);
         // Влагу кладёт «виртуальный дождь» по всей карте (см. ticker) —
         // видимые капли у камеры её не дублируют.
 
@@ -136,13 +122,15 @@ export class Main {
             fxLayer.addChild(g);
             rings.push({ g, life: 0, color: golden ? 0xffd54a : 0xffffff });
 
-            const t = new PIXI.Text(`+${value}`, {
-                fontFamily: "Arial",
-                fontSize: 110,
-                fontWeight: "bold",
-                fill: golden ? 0xffd54a : 0xffffff,
-                stroke: 0x000000,
-                strokeThickness: 8,
+            const t = new PIXI.Text({
+                text: `+${value}`,
+                style: {
+                    fontFamily: "Arial",
+                    fontSize: 110,
+                    fontWeight: "bold",
+                    fill: golden ? 0xffd54a : 0xffffff,
+                    stroke: { color: 0x000000, width: 8 },
+                },
             });
             t.anchor.set(0.5);
             t.position.set(x, y - 60);
@@ -153,39 +141,57 @@ export class Main {
         // Счёт и рекорд — на stage, фиксированы к экрану (не зумятся с viewport).
         let score = 0;
         let best = Number(localStorage.getItem("pixi-snake-best") || 0);
-        const scoreText: PIXI.Text = new PIXI.Text("Очки: 0", {
-            fontFamily: "Arial",
-            fontSize: 32,
-            fill: 0xffffff,
-            stroke: 0x000000,
-            strokeThickness: 4,
+        const scoreText = new PIXI.Text({
+            text: "Очки: 0",
+            style: {
+                fontFamily: "Arial",
+                fontSize: 32,
+                fill: 0xffffff,
+                stroke: { color: 0x000000, width: 4 },
+            },
         });
         scoreText.position.set(20, 20);
         stage.addChild(scoreText);
 
-        const bestText: PIXI.Text = new PIXI.Text(`Рекорд: ${best}`, {
-            fontFamily: "Arial",
-            fontSize: 22,
-            fill: 0xffe08a,
-            stroke: 0x000000,
-            strokeThickness: 3,
+        const bestText = new PIXI.Text({
+            text: `Рекорд: ${best}`,
+            style: {
+                fontFamily: "Arial",
+                fontSize: 22,
+                fill: 0xffe08a,
+                stroke: { color: 0x000000, width: 3 },
+            },
         });
         bestText.position.set(20, 62);
         stage.addChild(bestText);
 
-        const hintText: PIXI.Text = new PIXI.Text(
-            "WASD / стрелки / джойстик — движение · Shift — ускорение · V — погода",
-            {
+        const hintText = new PIXI.Text({
+            text: "WASD / стрелки / джойстик — движение · Shift — ускорение · V — погода",
+            style: {
                 fontFamily: "Arial",
                 fontSize: 16,
                 fill: 0xffffff,
-                stroke: 0x000000,
-                strokeThickness: 3,
-            }
-        );
+                stroke: { color: 0x000000, width: 3 },
+            },
+        });
         hintText.alpha = 0.65;
         hintText.position.set(20, 96);
         stage.addChild(hintText);
+
+        // FPS: обновляем текст пару раз в секунду, чтобы сам счётчик не мельтешил.
+        const fpsText = new PIXI.Text({
+            text: "FPS: —",
+            style: {
+                fontFamily: "Arial",
+                fontSize: 14,
+                fill: 0xa8ffb0,
+                stroke: { color: 0x000000, width: 3 },
+            },
+        });
+        fpsText.alpha = 0.8;
+        fpsText.position.set(20, 122);
+        stage.addChild(fpsText);
+        let fpsTimer = 0;
 
         const setScore = (n: number): void => {
             score = n;
@@ -219,7 +225,13 @@ export class Main {
         const MAGNET_RADIUS = 350; // еда подтягивается к голове с этого расстояния
         const EAT_PADDING = 60; // насколько «широк» рот относительно радиуса еды
 
-        this.app!.ticker.add((delta: number) => {
+        this.app!.ticker.add((ticker: PIXI.Ticker) => {
+            const delta = ticker.deltaTime;
+            fpsTimer += delta;
+            if (fpsTimer >= 30) {
+                fpsTimer = 0;
+                fpsText.text = `FPS: ${Math.round(ticker.FPS)}`;
+            }
             weather.update(delta, viewport.getVisibleBounds());
             trees.update(delta); // лёгкое «дыхание» крон
             snake.setWetness(weather.wetness);
@@ -280,8 +292,11 @@ export class Main {
                     continue;
                 }
                 ring.g.clear();
-                ring.g.lineStyle(10 * (1 - t), ring.color, 1 - t);
-                ring.g.drawCircle(0, 0, 40 + t * 160);
+                ring.g.circle(0, 0, 40 + t * 160).stroke({
+                    width: 10 * (1 - t),
+                    color: ring.color,
+                    alpha: 1 - t,
+                });
             }
             for (let i = floaters.length - 1; i >= 0; i--) {
                 const f = floaters[i];
@@ -306,11 +321,11 @@ export class Main {
             viewport.setZoom(currentZoom + (targetZoom - currentZoom) * 0.02, true);
 
             viewport.follow(
-                // follow читает только x/y — полноценный DisplayObject не нужен
+                // follow читает только x/y — полноценный Container не нужен
                 {
                     x: head.x,
                     y: head.y,
-                } as unknown as PIXI.DisplayObject,
+                } as unknown as PIXI.Container,
                 {
                     speed: 20,
                     radius: 150,
@@ -319,34 +334,30 @@ export class Main {
         });
     }
 
-    private createRenderer(): void {
-        PIXI.settings.RESOLUTION = window.devicePixelRatio || 1;
-
-        this.app = new PIXI.Application({
+    private async createRenderer(): Promise<void> {
+        this.app = new PIXI.Application();
+        await this.app.init({
             resizeTo: window,
-            autoDensity: true, // Handles high DPI screens
+            resolution: window.devicePixelRatio || 1,
+            autoDensity: true, // high-DPI экраны
             backgroundColor: 0xf3f3f3,
             antialias: false,
         });
 
-        // console.log('app', this.app);
-        document.body.appendChild(this.app.view);
+        document.body.appendChild(this.app.canvas);
 
         this.viewport = new Viewport({
             screenWidth: window.innerWidth,
             screenHeight: window.innerHeight,
             worldWidth: WORLD_WIDTH,
             worldHeight: WORLD_HEIGHT,
-            // the interaction module is important for wheel to work properly when renderer.view is placed or scaled
-            interaction: this.app.renderer.plugins.interaction,
+            events: this.app.renderer.events,
         });
-        this.viewport.setZoom(0.25)
+        this.viewport.setZoom(0.25);
         // Камера не выходит за пределы мира — у краёв не видно «серую пустоту».
         this.viewport.clamp({ direction: "all" });
 
-        // console.log('this.viewport', this.viewport);
-        // console.log('this.app.renderer', this.app.renderer);
-        this.app!.stage.addChild(this.viewport);
+        this.app.stage.addChild(this.viewport);
 
         // Карта влажности — до мешей земли: шейдер песка сэмплит её для блика.
         this.wetGround = new WetGround(this.app.renderer, WORLD_WIDTH, WORLD_HEIGHT);
@@ -356,12 +367,12 @@ export class Main {
         // и растворяется вправо волнистой шумной кромкой — органичный стык.
         const qH = WORLD_HEIGHT + 1000;
         const background = new PIXI.Container();
-        background.interactive = false;
+        background.eventMode = "none";
 
         const SEAM_OVERLAP = 800; // насколько песок заходит на траву
         const grassX = SAND_WIDTH - SEAM_OVERLAP - 500;
         const grass = createGroundMesh(
-            PIXI.Texture.from("tileGrass"),
+            PIXI.Assets.get("tileGrass"),
             WORLD_WIDTH + 500 - grassX,
             qH
         );
@@ -372,14 +383,14 @@ export class Main {
         // карты влажности (AO запечён в цвет скриптом подготовки текстур).
         const sandW = SAND_WIDTH + SEAM_OVERLAP + 500;
         const sand = createGroundMesh(
-            PIXI.Texture.from("tileSand"),
+            PIXI.Assets.get("tileSand"),
             sandW,
             qH,
             900, // ширина растворения правого края
             undefined,
             {
-                normal: PIXI.Texture.from("sandNormal"),
-                roughness: PIXI.Texture.from("sandRough"),
+                normal: PIXI.Assets.get("sandNormal"),
+                roughness: PIXI.Assets.get("sandRough"),
                 wetMap: this.wetGround.texture,
                 worldRect: [-500, -500, sandW, qH],
                 worldSize: [WORLD_WIDTH, WORLD_HEIGHT],
@@ -395,8 +406,8 @@ export class Main {
         const grassLightFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
-            uniform sampler2D uSampler;
-            uniform vec4 inputSize;   // .xy = размер входа в пикселях (даёт PIXI)
+            uniform sampler2D uTexture;
+            uniform vec4 uInputSize;  // .xy = размер входа в пикселях (даёт PIXI)
             uniform vec3 uLightDir;   // направление света
             uniform float uStrength;  // сила рельефа
             uniform float uAmbient;   // фоновая засветка
@@ -404,13 +415,13 @@ export class Main {
             float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
             void main(void) {
-                vec2 texel = 1.0 / inputSize.xy;
-                vec4 color = texture2D(uSampler, vTextureCoord);
+                vec2 texel = 1.0 / uInputSize.xy;
+                vec4 color = texture2D(uTexture, vTextureCoord);
 
-                float hL = lum(texture2D(uSampler, vTextureCoord - vec2(texel.x, 0.0)).rgb);
-                float hR = lum(texture2D(uSampler, vTextureCoord + vec2(texel.x, 0.0)).rgb);
-                float hU = lum(texture2D(uSampler, vTextureCoord - vec2(0.0, texel.y)).rgb);
-                float hD = lum(texture2D(uSampler, vTextureCoord + vec2(0.0, texel.y)).rgb);
+                float hL = lum(texture2D(uTexture, vTextureCoord - vec2(texel.x, 0.0)).rgb);
+                float hR = lum(texture2D(uTexture, vTextureCoord + vec2(texel.x, 0.0)).rgb);
+                float hU = lum(texture2D(uTexture, vTextureCoord - vec2(0.0, texel.y)).rgb);
+                float hD = lum(texture2D(uTexture, vTextureCoord + vec2(0.0, texel.y)).rgb);
 
                 vec3 normal = normalize(vec3((hL - hR) * uStrength, (hU - hD) * uStrength, 1.0));
                 float diff = max(dot(normal, normalize(uLightDir)), 0.0);
@@ -419,31 +430,24 @@ export class Main {
                 gl_FragColor = vec4(color.rgb * light, color.a);
             }
         `;
-        const grassLight = new PIXI.Filter(undefined, grassLightFrag, {
-            uLightDir: [-0.4, -0.6, 0.7], // свет сверху-слева (top-down)
-            uStrength: 10.0,
-            uAmbient: 0.65,
+        const grassLight = PIXI.Filter.from({
+            gl: { vertex: PIXI.defaultFilterVert, fragment: grassLightFrag },
+            resources: {
+                lightUniforms: {
+                    uLightDir: {
+                        value: new Float32Array([-0.4, -0.6, 0.7]), // свет сверху-слева
+                        type: "vec3<f32>",
+                    },
+                    uStrength: { value: 10.0, type: "f32" },
+                    uAmbient: { value: 0.65, type: "f32" },
+                },
+            },
         });
         // Только трава: у песка честный попиксельный свет в собственном шейдере,
         // fake-рельеф из яркости ему не нужен (и не должен применяться дважды).
+        // NB: filterArea не задаём — v8 сам ограничивает фильтр видимой областью.
         grass.filters = [grassLight];
-        grass.filterArea = this.app.renderer.screen; // фильтр только по экрану (перф)
 
-        // возможно нужны будут следующие настройки, а может выпилить
-        // this.viewport
-            // .drag()
-            // .pinch()
-            // .wheel()
-            // Настройки во время игры
-            // .clampZoom({
-            //     minHeight: 650,
-            //     minWidth: 1000,
-            //     maxWidth: 2200,
-            //     maxHeight: 2200,
-            // })
-            // .bounce()
-            // .decelerate();
-        // this.app.renderer.resize(window.innerWidth, window.innerHeight);
         window.addEventListener("resize", this.onResize.bind(this));
 
         this.makeEndMarkers();
@@ -458,31 +462,14 @@ export class Main {
     }
 
     private makeEndMarkers(): void {
-        console.log("makeEndMarkers");
         const height = this.viewport!.worldHeight;
         const width = this.viewport!.worldWidth;
         const pointSize = 100;
         const markers = [
-            {
-                tint: 0xee8aff,
-                size: pointSize,
-                position: [width - pointSize, height - pointSize],
-            },
-            {
-                tint: 0xee8aff,
-                size: pointSize,
-                position: [0, height - pointSize],
-            },
-            {
-                tint: 0xee8aff,
-                size: pointSize,
-                position: [0, 0],
-            },
-            {
-                tint: 0xee8aff,
-                size: pointSize,
-                position: [width - pointSize, 0],
-            },
+            { tint: 0xee8aff, size: pointSize, position: [width - pointSize, height - pointSize] },
+            { tint: 0xee8aff, size: pointSize, position: [0, height - pointSize] },
+            { tint: 0xee8aff, size: pointSize, position: [0, 0] },
+            { tint: 0xee8aff, size: pointSize, position: [width - pointSize, 0] },
         ];
 
         for (let index = 0; index < markers.length; index++) {
@@ -490,12 +477,12 @@ export class Main {
             const marker: PIXI.Sprite = this.viewport!.addChild(
                 new PIXI.Sprite(PIXI.Texture.WHITE)
             );
-            marker.interactive = false;
-            marker.tint = markerSettings.tint; // голубой цвет
+            marker.eventMode = "none";
+            marker.tint = markerSettings.tint;
             marker.width = marker.height = markerSettings.size;
-            marker.position.set(...markerSettings.position);
+            marker.position.set(markerSettings.position[0], markerSettings.position[1]);
         }
     }
 }
 
-new Main();
+new Main().start().catch(e => console.error("game boot failed:", e));

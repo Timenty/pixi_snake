@@ -3,31 +3,26 @@
     "version": "2.3.0",
     "description": "pixi.js typescript boilerplate",
     "scripts": {
-        "test": "npx jest",
-        "code-coverage": "jest --coverage",
         "type-check": "tsc --noEmit",
-        "clean-build": "npx del-cli ./dist",
-        "dev": "parcel ./src/index.html --port=8080 --open ",
-        "build": "npm run type-check & npm run clean-build & parcel build ./src/index.html",
+        "dev": "vite --port 1234",
+        "build": "npm run type-check && vite build",
+        "preview": "vite preview",
+        "textures": "node scripts/prepare-ground-textures.js",
         "pretty-check": "npx prettier -c ./src/**/*.ts",
-        "lint-check": "npx eslint ./src/**/*.ts",
-        "code-style-check": "npm run lint-check && npm run pretty-check",
         "format": "npx prettier --write src/**"
     },
-    "author": "jkanchelov",
-    "license": "MIT",
+    "author": "timenty",
     "dependencies": {
         "gamepad.js": "github:neogeek/gamepad.js",
         "joypad.js": "^2.2.5",
         "nipplejs": "^0.8.5",
-        "pixi-viewport": "4.10.0",
-        "pixi.js": "5.3.12",
+        "pixi-viewport": "^6.0.3",
+        "pixi.js": "^8.19.0",
         "uncaught": "0.0.5"
     },
     "devDependencies": {
         "@types/jest": "^25.1.2",
         "@types/jsdom": "^12.2.4",
-        "@types/pixi.js": "^5.0.0",
         "@typescript-eslint/eslint-plugin": "^2.21.0",
         "@typescript-eslint/parser": "^2.21.0",
         "del-cli": "^3.0.0",
@@ -37,12 +32,11 @@
         "jest": "^25.1.0",
         "jest-canvas-mock": "^2.2.0",
         "jsdom": "^16.1.0",
-        "parcel-bundler": "^1.12.4",
-        "parcel-plugin-static-files-copy": "^2.3.1",
         "prettier": "^1.19.1",
         "sharp": "^0.35.3",
         "ts-jest": "^25.2.0",
-        "typescript": "^3.8.2"
+        "typescript": "^5.9.3",
+        "vite": "^8.1.4"
     },
     "jest": {
         "transform": {

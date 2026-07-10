@@ -1,25 +1,20 @@
-import * as PIXI from "pixi.js";
+import { Mesh, Point, RopeGeometry, Texture } from "pixi.js";
 
 // t ∈ [0..1] вдоль rope → множитель полуширины ленты в этой точке.
 export type WidthProfile = (t: number) => number;
 
 // RopeGeometry с переменной шириной: вместо постоянной полуширины каждая точка
 // получает свою — silhouette змейки сужается к хвосту, а не выглядит «бочкой».
-export class TaperedRopeGeometry extends PIXI.RopeGeometry {
+export class TaperedRopeGeometry extends RopeGeometry {
     private profile?: WidthProfile;
 
-    constructor(
-        width: number,
-        points: PIXI.Point[],
-        textureScale: number,
-        profile: WidthProfile
-    ) {
-        super(width, points, textureScale);
+    constructor(width: number, points: Point[], textureScale: number, profile: WidthProfile) {
+        super({ width, points, textureScale });
         this.profile = profile;
         this.updateVertices(); // базовый конструктор считал вершины ещё без профиля
     }
 
-    // Копия RopeGeometry.updateVertices из PIXI 5.3 + множитель profile(t).
+    // Копия RopeGeometry.updateVertices из PIXI v8 + множитель profile(t).
     public updateVertices(): void {
         if (!this.profile) {
             // вызов из конструктора базового класса, профиль ещё не присвоен
@@ -30,12 +25,11 @@ export class TaperedRopeGeometry extends PIXI.RopeGeometry {
         if (points.length < 1) return;
 
         let lastPoint = points[0];
-        // buffers отсутствует в старых @types/pixi.js — в рантайме поле есть
-        const vertexBuffer = (this as any).buffers[0];
+        const vertexBuffer = this.buffers[0]; // aPosition
         const vertices = vertexBuffer.data as Float32Array;
         const total = points.length;
         const half =
-            this.textureScale > 0 ? (this.textureScale * this._width) / 2 : this._width / 2;
+            this.textureScale > 0 ? (this.textureScale * this.width) / 2 : this.width / 2;
 
         for (let i = 0; i < total; i++) {
             const point = points[i];
@@ -62,29 +56,24 @@ export class TaperedRopeGeometry extends PIXI.RopeGeometry {
     }
 }
 
-// Аналог PIXI.SimpleRope, но на TaperedRopeGeometry.
-export class TaperedRope extends PIXI.Mesh {
+// Аналог PIXI.MeshRope, но на TaperedRopeGeometry.
+export class TaperedRope extends Mesh {
     public autoUpdate = true;
 
     constructor(
-        texture: PIXI.Texture,
-        points: PIXI.Point[],
+        texture: Texture,
+        points: Point[],
         textureScale: number,
         profile: WidthProfile
     ) {
-        super(
-            new TaperedRopeGeometry(texture.height, points, textureScale, profile),
-            new PIXI.MeshMaterial(texture)
-        );
-    }
-
-    protected _render(renderer: PIXI.Renderer): void {
-        const geometry = this.geometry as any; // update/_width нет в старых @types
-        const material = this.shader as PIXI.MeshMaterial;
-        if (this.autoUpdate || geometry._width !== material.texture.height) {
-            geometry._width = material.texture.height;
-            geometry.update();
-        }
-        super._render(renderer);
+        if (textureScale > 0) texture.source.style.addressMode = "repeat";
+        super({
+            geometry: new TaperedRopeGeometry(texture.height, points, textureScale, profile),
+            texture,
+        });
+        // Точки двигаются каждый кадр — пересчитываем геометрию перед рендером.
+        this.onRender = (): void => {
+            if (this.autoUpdate) (this.geometry as TaperedRopeGeometry).update();
+        };
     }
 }

@@ -1,17 +1,17 @@
-import * as PIXI from "pixi.js";
+import { Mesh, MeshGeometry, Shader, Texture, UniformGroup } from "pixi.js";
 
 // Редкие вкрапления другой текстуры: доля ячеек untiling-сетки,
 // которые целиком рисуются accent-текстурой (камни среди песка и т.п.).
 export interface GroundAccent {
-    texture: PIXI.Texture;
+    texture: Texture;
     fraction: number; // 0..1, напр. 0.08 = ~8% ячеек
 }
 
 // Попиксельное освещение по картам материала (вместо fake-фильтра по яркости).
 export interface GroundLighting {
-    normal: PIXI.Texture; // карта нормалей (OpenGL-конвенция, Y вверх)
-    roughness?: PIXI.Texture; // шершавость: гасит блик (1 - rough)
-    wetMap?: PIXI.Texture; // карта влажности мира (WetGround.texture) — мокрое бликует
+    normal: Texture; // карта нормалей (OpenGL-конвенция, Y вверх)
+    roughness?: Texture; // шершавость: гасит блик (1 - rough)
+    wetMap?: Texture; // карта влажности мира (WetGround.texture) — мокрое бликует
     worldRect?: [number, number, number, number]; // x, y, w, h меша в мировых координатах
     worldSize?: [number, number]; // размер всего мира (uv для wetMap)
 }
@@ -28,7 +28,7 @@ function isPow2(n: number): boolean {
  * Для power-of-two текстур включается аппаратный REPEAT-сэмплинг (без fract
  * в шейдере): билинейная фильтрация корректно заворачивается через край тайла
  * и не рисует тонкую сетку на границах ячеек. Для NPOT (трава 1000×1000)
- * остаётся fract-вариант — WebGL1 не умеет REPEAT на NPOT.
+ * остаётся fract-вариант — на WebGL1-фолбэке REPEAT для NPOT недоступен.
  *
  * lighting — честный попиксельный свет: нормали сэмплятся ТЕМИ ЖЕ
  * untiling-смещениями, что и цвет (рельеф не разъезжается с картинкой),
@@ -40,23 +40,23 @@ function isPow2(n: number): boolean {
  * а не прямой линией (меш кладётся ПОВЕРХ соседнего биома с нахлёстом).
  */
 export function createGroundMesh(
-    texture: PIXI.Texture,
+    texture: Texture,
     width: number,
     height: number,
     fadeRight = 0,
     accent?: GroundAccent,
     lighting?: GroundLighting
-): PIXI.Mesh {
-    // NB: не MIRRORED_REPEAT — на направленных текстурах (дюны) зеркалка
+): Mesh<MeshGeometry, Shader> {
+    // NB: не mirror-repeat — на направленных текстурах (дюны) зеркалка
     // даёт «ёлочку». Бесшовность краёв обеспечивает пайплайн сжатия ассетов
     // (scripts/prepare-ground-textures.js ресайзит с заворотом краёв).
     const useRepeat = isPow2(texture.width) && isPow2(texture.height);
-    const wrap = useRepeat ? PIXI.WRAP_MODES.REPEAT : PIXI.WRAP_MODES.CLAMP;
-    texture.baseTexture.wrapMode = wrap;
-    if (accent) accent.texture.baseTexture.wrapMode = wrap;
+    const address = useRepeat ? "repeat" : "clamp-to-edge";
+    texture.source.style.addressMode = address;
+    if (accent) accent.texture.source.style.addressMode = address;
     if (lighting) {
-        lighting.normal.baseTexture.wrapMode = wrap;
-        if (lighting.roughness) lighting.roughness.baseTexture.wrapMode = wrap;
+        lighting.normal.source.style.addressMode = address;
+        if (lighting.roughness) lighting.roughness.source.style.addressMode = address;
     }
 
     // POT: аппаратный wrap; NPOT: fract вручную (даёт микро-шов, но выбора нет).
@@ -74,18 +74,20 @@ export function createGroundMesh(
                 p = g + hash2(cell);
                 pick = step(hashCell(cell), uAccentMix);
                 c${i} = mix(texture2D(uTex, ${uv}), texture2D(uAccent, ${uv}), pick);
-                ${hasLight ? `n${i} = texture2D(uNormal, ${uv}).rgb;` : ""}
-                ${hasRough ? `r${i} = texture2D(uRough, ${uv}).r;` : ""}`;
+                ${hasLight ? `n${i} = texture2D(uNormalMap, ${uv}).rgb;` : ""}
+                ${hasRough ? `r${i} = texture2D(uRoughMap, ${uv}).r;` : ""}`;
 
     const vert = `
-        attribute vec2 aVertexPosition;
-        attribute vec2 aUvs;
-        uniform mat3 translationMatrix;
-        uniform mat3 projectionMatrix;
+        attribute vec2 aPosition;
+        attribute vec2 aUV;
+        uniform mat3 uProjectionMatrix;
+        uniform mat3 uWorldTransformMatrix;
+        uniform mat3 uTransformMatrix;
         varying vec2 vUvs;
         void main(void) {
-            vUvs = aUvs;
-            gl_Position = vec4((projectionMatrix * translationMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);
+            vUvs = aUV;
+            mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
+            gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
         }
     `;
 
@@ -98,11 +100,11 @@ export function createGroundMesh(
         uniform vec2 uTiles;
         uniform vec2 uFade;  // uv.x начала и конца растворения (0,0 = выкл)
         uniform vec2 uWave;  // частота и амплитуда (в uv) волнистости кромки
-${hasLight ? `        uniform sampler2D uNormal;
+${hasLight ? `        uniform sampler2D uNormalMap;
         uniform vec3 uLightDir;
         uniform float uAmbient;` : ""}
-${hasRough ? "        uniform sampler2D uRough;" : ""}
-${hasWet ? `        uniform sampler2D uWet;
+${hasRough ? "        uniform sampler2D uRoughMap;" : ""}
+${hasWet ? `        uniform sampler2D uWetMap;
         uniform vec4 uWorldRect; // x, y, w, h меша в мире
         uniform vec2 uWorldSize;` : ""}
 
@@ -160,9 +162,10 @@ ${hasLight ? `
             float spec = pow(max(dot(nrm, H), 0.0), 24.0);
 ${hasRough ? `            float rough = mix(mix(r00, r10, b.x), mix(r01, r11, b.x), b.y);
             spec *= (1.0 - rough * 0.85);` : ""}
-${hasWet ? `            // Мокрая земля бликует: локальная влажность из карты мира.
+${hasWet ? `            // Мокрая земля бликует: локальная влажность из карты мира
+            // (карта хранит «светлость»: белое = сухо → wet = 1 - r).
             vec2 wetUv = (uWorldRect.xy + vUvs * uWorldRect.zw) / uWorldSize;
-            float wet = texture2D(uWet, wetUv).a;
+            float wet = 1.0 - texture2D(uWetMap, wetUv).r;
             spec *= (0.08 + 0.92 * wet);` : `            spec *= 0.08;`}
             color.rgb += vec3(1.0, 0.98, 0.9) * spec;` : ""}
 
@@ -179,36 +182,66 @@ ${hasWet ? `            // Мокрая земля бликует: локаль�
         }
     `;
 
-    const geometry = new PIXI.Geometry()
-        .addAttribute("aVertexPosition", [0, 0, width, 0, width, height, 0, height], 2)
-        .addAttribute("aUvs", [0, 0, 1, 0, 1, 1, 0, 1], 2)
-        .addIndex([0, 1, 2, 0, 2, 3]);
+    const geometry = new MeshGeometry({
+        positions: new Float32Array([0, 0, width, 0, width, height, 0, height]),
+        uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+    });
 
     // Волны кромки: период ~500 px, амплитуда ~60% ширины растворения.
     const fadeU = fadeRight / width;
-    const uniforms: Record<string, unknown> = {
-        uTex: texture,
-        uAccent: accent ? accent.texture : texture,
-        uAccentMix: accent ? accent.fraction : 0,
-        uTiles: [width / texture.width, height / texture.height],
-        uFade: fadeRight > 0 ? [1.0 - fadeU * 1.6, 1.0 - fadeU * 0.4] : [0, 0],
-        uWave: [height / 500, fadeU * 0.6],
+    const groundUniforms = new UniformGroup({
+        uAccentMix: { value: accent ? accent.fraction : 0, type: "f32" },
+        uTiles: {
+            value: new Float32Array([width / texture.width, height / texture.height]),
+            type: "vec2<f32>",
+        },
+        uFade: {
+            value: new Float32Array(
+                fadeRight > 0 ? [1.0 - fadeU * 1.6, 1.0 - fadeU * 0.4] : [0, 0]
+            ),
+            type: "vec2<f32>",
+        },
+        uWave: { value: new Float32Array([height / 500, fadeU * 0.6]), type: "vec2<f32>" },
+        ...(lighting
+            ? {
+                  // те же параметры света, что у fake-фильтра травы — биомы в одном тоне
+                  uLightDir: { value: new Float32Array([-0.4, -0.6, 0.7]), type: "vec3<f32>" },
+                  uAmbient: { value: 0.65, type: "f32" },
+                  ...(lighting.wetMap
+                      ? {
+                            uWorldRect: {
+                                value: new Float32Array(
+                                    lighting.worldRect || [0, 0, width, height]
+                                ),
+                                type: "vec4<f32>",
+                            },
+                            uWorldSize: {
+                                value: new Float32Array(
+                                    lighting.worldSize || [width, height]
+                                ),
+                                type: "vec2<f32>",
+                            },
+                        }
+                      : {}),
+              }
+            : {}),
+    });
+
+    const resources: Record<string, unknown> = {
+        groundUniforms,
+        uTex: texture.source,
+        uAccent: (accent ? accent.texture : texture).source,
     };
     if (lighting) {
-        uniforms.uNormal = lighting.normal;
-        // те же параметры света, что у fake-фильтра травы — биомы в одном тоне
-        uniforms.uLightDir = [-0.4, -0.6, 0.7];
-        uniforms.uAmbient = 0.65;
-        if (lighting.roughness) uniforms.uRough = lighting.roughness;
-        if (lighting.wetMap) {
-            uniforms.uWet = lighting.wetMap;
-            uniforms.uWorldRect = lighting.worldRect || [0, 0, width, height];
-            uniforms.uWorldSize = lighting.worldSize || [width, height];
-        }
+        resources.uNormalMap = lighting.normal.source;
+        if (lighting.roughness) resources.uRoughMap = lighting.roughness.source;
+        if (lighting.wetMap) resources.uWetMap = lighting.wetMap.source;
     }
-    const shader = PIXI.Shader.from(vert, frag, uniforms);
 
-    const mesh = new PIXI.Mesh(geometry, shader as any);
-    mesh.interactive = false;
+    const shader = Shader.from({ gl: { vertex: vert, fragment: frag }, resources });
+
+    const mesh = new Mesh<MeshGeometry, Shader>({ geometry, shader });
+    mesh.eventMode = "none";
     return mesh;
 }

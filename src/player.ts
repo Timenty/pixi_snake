@@ -1,3 +1,3 @@
 export class Player {
-    constructor(parameters) {}
+    constructor(_parameters?: unknown) {}
 }

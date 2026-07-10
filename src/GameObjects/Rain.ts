@@ -53,7 +53,7 @@ export class Rain {
     private windDir = -1; // знак наклона капель: −1 = снос влево (по умолч. как облака)
 
     constructor() {
-        this.container.interactive = false;
+        this.container.eventMode = "none";
         this.dropTex = makeDropTexture();
     }
 
@@ -111,10 +111,13 @@ export class Rain {
                 continue;
             }
             s.g.clear();
-            s.g.lineStyle(2.5 * WORLD_SCALE, 0xdcf0ff, 0.7 * (1 - t));
             // приплюснутый эллипс — круги на земле в top-down чуть сплющены бликом
             const r = (3 + t * 11) * WORLD_SCALE;
-            s.g.drawEllipse(0, 0, r, r * 0.6);
+            s.g.ellipse(0, 0, r, r * 0.6).stroke({
+                width: 2.5 * WORLD_SCALE,
+                color: 0xdcf0ff,
+                alpha: 0.7 * (1 - t),
+            });
         }
     }
 

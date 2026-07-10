@@ -24,7 +24,7 @@ export class Food {
         this.margin = margin;
 
         this.graphics = new PIXI.Graphics();
-        this.graphics.interactive = false;
+        this.graphics.eventMode = "none";
 
         this.respawn();
     }
@@ -34,16 +34,10 @@ export class Food {
         const r = this._radius;
         g.clear();
         // Тень (top-down): тёмный круг со смещением, рисуем первым → под едой.
-        g.beginFill(0x000000, 0.25);
-        g.drawCircle(6, 10, r);
-        g.endFill();
-        g.beginFill(color);
-        g.drawCircle(0, 0, r);
-        g.endFill();
+        g.circle(6, 10, r).fill({ color: 0x000000, alpha: 0.25 });
+        g.circle(0, 0, r).fill(color);
         // Блик сверху-слева — в тон освещению травы.
-        g.beginFill(0xffffff, 0.35);
-        g.drawCircle(-r * 0.3, -r * 0.35, r * 0.25);
-        g.endFill();
+        g.circle(-r * 0.3, -r * 0.35, r * 0.25).fill({ color: 0xffffff, alpha: 0.35 });
     }
 
     public respawn(): void {

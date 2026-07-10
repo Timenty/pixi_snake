@@ -1,4 +1,4 @@
-import * as PIXI from "pixi.js";
+import { Mesh, MeshGeometry, Shader, UniformGroup } from "pixi.js";
 
 /**
  * Параметры теней, которые можно плавно менять на лету (погода).
@@ -83,7 +83,8 @@ const PARAM_UNIFORM: Record<keyof CloudParams, string> = {
  * поэтому тени не «едут штампом», а медленно меняют форму.
  */
 export class CloudShadows {
-    public readonly mesh: PIXI.Mesh;
+    public readonly mesh: Mesh<MeshGeometry, Shader>;
+    private cloudUniforms: UniformGroup;
     private time = 0;
     private transition: {
         from: CloudParams;
@@ -101,14 +102,16 @@ export class CloudShadows {
         const h = worldHeight + pad * 2;
 
         const vert = `
-            attribute vec2 aVertexPosition;
-            attribute vec2 aUvs;
-            uniform mat3 translationMatrix;
-            uniform mat3 projectionMatrix;
+            attribute vec2 aPosition;
+            attribute vec2 aUV;
+            uniform mat3 uProjectionMatrix;
+            uniform mat3 uWorldTransformMatrix;
+            uniform mat3 uTransformMatrix;
             varying vec2 vUvs;
             void main(void) {
-                vUvs = aUvs;
-                gl_Position = vec4((projectionMatrix * translationMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);
+                vUvs = aUV;
+                mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
+                gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
             }
         `;
 
@@ -217,43 +220,49 @@ export class CloudShadows {
             }
         `;
 
-        const geometry = new PIXI.Geometry()
-            .addAttribute("aVertexPosition", [0, 0, w, 0, w, h, 0, h], 2)
-            .addAttribute("aUvs", [0, 0, 1, 0, 1, 1, 0, 1], 2)
-            .addIndex([0, 1, 2, 0, 2, 3]);
-
-        const shader = PIXI.Shader.from(vert, frag, {
-            uTime: 0,
-            uWind: opts.wind,
-            uAmbient: opts.ambient,
-            uScaleA: opts.scaleA,
-            uCoverA: opts.coverA,
-            uSoftA: opts.softA,
-            uDarkA: opts.darkA,
-            uScaleB: opts.scaleB,
-            uCoverB: opts.coverB,
-            uSoftB: opts.softB,
-            uDarkB: opts.darkB,
-            uSpeedB: opts.speedB,
-            uEdgeFade: opts.edgeFade,
-            uCoreA: opts.coreA,
-            uSway: opts.sway,
-            uSwayFreq: opts.swayFreq,
+        const geometry = new MeshGeometry({
+            positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
+            uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+            indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
         });
 
-        this.mesh = new PIXI.Mesh(geometry, shader as any);
-        this.mesh.interactive = false;
+        this.cloudUniforms = new UniformGroup({
+            uTime: { value: 0, type: "f32" },
+            uWind: { value: new Float32Array(opts.wind), type: "vec2<f32>" },
+            uAmbient: { value: opts.ambient, type: "f32" },
+            uEdgeFade: { value: opts.edgeFade, type: "f32" },
+            uCoreA: { value: opts.coreA, type: "f32" },
+            uSway: { value: opts.sway, type: "f32" },
+            uSwayFreq: { value: opts.swayFreq, type: "f32" },
+            uScaleA: { value: new Float32Array(opts.scaleA), type: "vec2<f32>" },
+            uCoverA: { value: opts.coverA, type: "f32" },
+            uSoftA: { value: opts.softA, type: "f32" },
+            uDarkA: { value: opts.darkA, type: "f32" },
+            uScaleB: { value: new Float32Array(opts.scaleB), type: "vec2<f32>" },
+            uCoverB: { value: opts.coverB, type: "f32" },
+            uSoftB: { value: opts.softB, type: "f32" },
+            uDarkB: { value: opts.darkB, type: "f32" },
+            uSpeedB: { value: opts.speedB, type: "f32" },
+        });
+
+        const shader = Shader.from({
+            gl: { vertex: vert, fragment: frag },
+            resources: { cloudUniforms: this.cloudUniforms },
+        });
+
+        this.mesh = new Mesh<MeshGeometry, Shader>({ geometry, shader });
+        this.mesh.eventMode = "none";
         this.mesh.position.set(-pad, -pad);
     }
 
-    private get uniforms(): Record<string, number> {
-        return (this.mesh.shader as any).uniforms;
+    private get uniforms(): Record<string, number | Float32Array> {
+        return this.cloudUniforms.uniforms as Record<string, number | Float32Array>;
     }
 
     // Ветер шейдера. ВАЖНО: облака ВИЗУАЛЬНО дрейфуют против этого вектора
     // (поле сэмплится со сдвигом +drift) — для согласования дождя и т.п.
     public get windVector(): [number, number] {
-        const w = (this.uniforms as any).uWind;
+        const w = this.uniforms.uWind as Float32Array;
         return [w[0], w[1]];
     }
 
@@ -261,7 +270,7 @@ export class CloudShadows {
         const u = this.uniforms;
         const out = {} as CloudParams;
         for (const key of Object.keys(PARAM_UNIFORM) as Array<keyof CloudParams>) {
-            out[key] = u[PARAM_UNIFORM[key]];
+            out[key] = u[PARAM_UNIFORM[key]] as number;
         }
         return out;
     }
@@ -306,7 +315,6 @@ export class CloudShadows {
 
 // Тени крон деревьев: та же машинерия, но поле почти статично — крона
 // едва «дышит» на ветру. Слой B выключен. Пятна мелкие и с резким краем.
-// Пока нигде не используется — заготовка для лесных карт.
 export const TREE_SHADOW_OPTIONS: Partial<CloudLayerOptions> = {
     wind: [0.00006, 0.000025],
     scaleA: [22, 22], // пятна ~400-700 px — размер кроны
