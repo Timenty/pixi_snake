@@ -10,7 +10,8 @@ const DRY_ADD = 0.012; // возврат светлости за проход в
 const RAIN_ADD = 0.004;
 
 // Мягкое пятно: радиальный градиент, чёрный центр → прозрачный край.
-function makeBlobTexture(): PIXI.Texture {
+// Экспорт: тем же штампом пользуется след на песке (SandTrail).
+export function makeBlobTexture(): PIXI.Texture {
     const size = 64;
     const canvas = document.createElement("canvas");
     canvas.width = size;

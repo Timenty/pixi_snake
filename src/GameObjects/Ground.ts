@@ -7,6 +7,15 @@ export interface GroundAccent {
     fraction: number; // 0..1, напр. 0.08 = ~8% ячеек
 }
 
+// Растворение краёв меша шумной волнистой кромкой (px на каждую сторону):
+// так биомы склеиваются органической границей, а не прямой линией.
+export interface GroundFade {
+    left?: number;
+    right?: number;
+    top?: number;
+    bottom?: number;
+}
+
 // Попиксельное освещение по картам материала (вместо fake-фильтра по яркости).
 export interface GroundLighting {
     normal: Texture; // карта нормалей (OpenGL-конвенция, Y вверх)
@@ -35,15 +44,14 @@ function isPow2(n: number): boolean {
  * диффуз + солнечный блик, который усиливается на мокрой земле (wetMap)
  * и гасится шершавостью (roughness). AO предполагается запечённым в цвет.
  *
- * fadeRight > 0 — правый край меша растворяется шумной волнистой кромкой
- * шириной ~fadeRight px: так биомы склеиваются органической границей,
- * а не прямой линией (меш кладётся ПОВЕРХ соседнего биома с нахлёстом).
+ * fade — растворение краёв (число = только правый край, объект = любые
+ * стороны): меш кладётся ПОВЕРХ соседнего биома с нахлёстом, кромка шумная.
  */
 export function createGroundMesh(
     texture: Texture,
     width: number,
     height: number,
-    fadeRight = 0,
+    fade: number | GroundFade = 0,
     accent?: GroundAccent,
     lighting?: GroundLighting
 ): Mesh<MeshGeometry, Shader> {
@@ -98,8 +106,8 @@ export function createGroundMesh(
         uniform sampler2D uAccent;
         uniform float uAccentMix; // доля accent-ячеек (0 = выкл)
         uniform vec2 uTiles;
-        uniform vec2 uFade;  // uv.x начала и конца растворения (0,0 = выкл)
-        uniform vec2 uWave;  // частота и амплитуда (в uv) волнистости кромки
+        uniform vec4 uFadeW;    // ширина растворения в uv: left, right, top, bottom (0 = выкл)
+        uniform vec2 uWaveFreq; // частота волн кромки: .x — вдоль y (бока), .y — вдоль x (верх/низ)
 ${hasLight ? `        uniform sampler2D uNormalMap;
         uniform vec3 uLightDir;
         uniform float uAmbient;` : ""}
@@ -127,6 +135,18 @@ ${hasWet ? `        uniform sampler2D uWetMap;
             float f = fract(y);
             float u = f * f * (3.0 - 2.0 * f);
             return mix(hash1(i), hash1(i + 1.0), u);
+        }
+
+        // Два масштаба волн: крупные заливы + мелкая рвань. seed — чтобы
+        // соседние края одного меша не повторяли рисунок друг друга.
+        float edgeWave(float t, float seed) {
+            return (edgeNoise(t + seed) - 0.5)
+                + (edgeNoise(t * 3.7 + seed + 13.5) - 0.5) * 0.35;
+        }
+
+        // d — расстояние от края в uv, w — ширина растворения (uv).
+        float edgeFade(float d, float w, float n) {
+            return w > 0.0 ? smoothstep(w * 0.4, w * 1.6, d + n * w * 0.6) : 1.0;
         }
 
         void main(void) {
@@ -169,13 +189,12 @@ ${hasWet ? `            // Мокрая земля бликует: локаль�
             spec *= (0.08 + 0.92 * wet);` : `            spec *= 0.08;`}
             color.rgb += vec3(1.0, 0.98, 0.9) * spec;` : ""}
 
-            float alpha = 1.0;
-            if (uFade.y > 0.0) {
-                // два масштаба волн: крупные заливы + мелкая рвань
-                float n = (edgeNoise(vUvs.y * uWave.x) - 0.5)
-                    + (edgeNoise(vUvs.y * uWave.x * 3.7 + 13.5) - 0.5) * 0.35;
-                alpha = 1.0 - smoothstep(uFade.x, uFade.y, vUvs.x + n * uWave.y);
-            }
+            float nSide = edgeWave(vUvs.y * uWaveFreq.x, 0.0);
+            float nFlat = edgeWave(vUvs.x * uWaveFreq.y, 71.0);
+            float alpha = edgeFade(vUvs.x, uFadeW.x, edgeWave(vUvs.y * uWaveFreq.x, 37.0))
+                * edgeFade(1.0 - vUvs.x, uFadeW.y, nSide)
+                * edgeFade(vUvs.y, uFadeW.z, nFlat)
+                * edgeFade(1.0 - vUvs.y, uFadeW.w, edgeWave(vUvs.x * uWaveFreq.y, 108.0));
 
             // premultiplied alpha
             gl_FragColor = vec4(color.rgb * alpha, alpha);
@@ -189,20 +208,26 @@ ${hasWet ? `            // Мокрая земля бликует: локаль�
     });
 
     // Волны кромки: период ~500 px, амплитуда ~60% ширины растворения.
-    const fadeU = fadeRight / width;
+    const f: GroundFade = typeof fade === "number" ? { right: fade } : fade;
     const groundUniforms = new UniformGroup({
         uAccentMix: { value: accent ? accent.fraction : 0, type: "f32" },
         uTiles: {
             value: new Float32Array([width / texture.width, height / texture.height]),
             type: "vec2<f32>",
         },
-        uFade: {
-            value: new Float32Array(
-                fadeRight > 0 ? [1.0 - fadeU * 1.6, 1.0 - fadeU * 0.4] : [0, 0]
-            ),
+        uFadeW: {
+            value: new Float32Array([
+                (f.left || 0) / width,
+                (f.right || 0) / width,
+                (f.top || 0) / height,
+                (f.bottom || 0) / height,
+            ]),
+            type: "vec4<f32>",
+        },
+        uWaveFreq: {
+            value: new Float32Array([height / 500, width / 500]),
             type: "vec2<f32>",
         },
-        uWave: { value: new Float32Array([height / 500, fadeU * 0.6]), type: "vec2<f32>" },
         ...(lighting
             ? {
                   // те же параметры света, что у fake-фильтра травы — биомы в одном тоне

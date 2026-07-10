@@ -2,9 +2,11 @@ import * as PIXI from "pixi.js";
 import { Viewport } from "pixi-viewport";
 
 import lowPolyGrass from "./assets/background/low_poly_grass.png";
+import lowPolyMeadow from "./assets/background/low_poly_grass_2.jpg";
 import sandColorJpg from "./assets/background/sand_color.jpg";
 import sandNormalJpg from "./assets/background/sand_normal.jpg";
 import sandRoughJpg from "./assets/background/sand_rough.jpg";
+import cratePng from "./assets/items/crate.png";
 
 import { Snake } from "./GameObjects/Snake";
 import { Food } from "./GameObjects/Food";
@@ -12,7 +14,10 @@ import { CloudShadows, TreeShadows } from "./GameObjects/CloudShadows";
 import { createGroundMesh } from "./GameObjects/Ground";
 import { Rain } from "./GameObjects/Rain";
 import { WetGround } from "./GameObjects/WetGround";
+import { SandTrail } from "./GameObjects/SandTrail";
 import { Weather, WeatherKind } from "./GameObjects/Weather";
+import { Crate } from "./GameObjects/Crate";
+import { stepPushables } from "./Physics/PushableBody";
 import {
     generateSkin,
     loadSkinOptions,
@@ -37,13 +42,16 @@ export class Main {
     private viewport: Viewport | undefined;
     // Создаётся в createRenderer: карта влажности нужна шейдеру песка (блик).
     private wetGround: WetGround | undefined;
+    private sandTrail: SandTrail | undefined;
 
     public async start(): Promise<void> {
         await PIXI.Assets.load([
             { alias: "tileGrass", src: lowPolyGrass },
+            { alias: "tileMeadow", src: lowPolyMeadow },
             { alias: "tileSand", src: sandColorJpg },
             { alias: "sandNormal", src: sandNormalJpg },
             { alias: "sandRough", src: sandRoughJpg },
+            { alias: "crate", src: cratePng },
         ]);
         await this.createRenderer();
         this.buildGame();
@@ -78,6 +86,14 @@ export class Main {
             foods.push(food);
         }
 
+        // Ящики: не еда — толкаются телом, головой сильнее (Snake.pushBody).
+        // Вес настраивается per-ящик: лёгкий скользит, тяжёлый едва поддаётся.
+        const crates: Crate[] = [
+            new Crate(PIXI.Assets.get("crate"), { x: 2900, y: 2900, size: 260, mass: 2 }),
+            new Crate(PIXI.Assets.get("crate"), { x: 4700, y: 3400, size: 320, mass: 6 }),
+        ];
+        for (const crate of crates) viewport.addChild(crate.model); // выше змейки — ящик «выше» неё
+
         // Слой эффектов поверх еды и змейки.
         const fxLayer = new PIXI.Container();
         viewport.addChild(fxLayer);
@@ -85,15 +101,15 @@ export class Main {
         // Погода: тени облаков и дождь — в мировых координатах (в viewport,
         // поверх змейки и еды): дождь привязан к поверхности, а не к камере.
         // Начальное состояние можно задать через ?weather=sunny|overcast|sunshower.
-        const clouds = new CloudShadows(viewport.worldWidth, viewport.worldHeight);
-        viewport.addChild(clouds.mesh);
+        const clouds = new CloudShadows(this.app!.renderer, viewport.worldWidth, viewport.worldHeight);
+        viewport.addChild(clouds.view);
         // Тестовая роща: статичные тени крон в нижнем левом углу ТРАВЯНОЙ части
         // (левее — песок, там кронам не место).
-        // Меш имеет внутренний запас 1000px — позицию сдвигаем с его учётом.
+        // Поле имеет внутренний запас 1000px — позицию сдвигаем с его учётом.
         const TREES_SIZE = 2600;
-        const trees = new TreeShadows(TREES_SIZE, TREES_SIZE);
-        trees.mesh.position.set(SAND_WIDTH - 1000, viewport.worldHeight - TREES_SIZE - 1000);
-        viewport.addChild(trees.mesh);
+        const trees = new TreeShadows(this.app!.renderer, TREES_SIZE, TREES_SIZE);
+        trees.view.position.set(SAND_WIDTH - 1000, viewport.worldHeight - TREES_SIZE - 1000);
+        viewport.addChild(trees.view);
 
         const rain = new Rain();
         viewport.addChild(rain.container); // капли над тенями облаков
@@ -104,6 +120,9 @@ export class Main {
         // упали капли. Слой сразу над землёй (index 1), под змейкой/едой.
         const wetGround = this.wetGround!;
         viewport.addChildAt(wetGround.overlay, 1);
+        // След на песке — тем же слоем (multiply-оверлеи коммутируют).
+        const sandTrail = this.sandTrail!;
+        viewport.addChildAt(sandTrail.overlay, 1);
         // Влагу кладёт «виртуальный дождь» по всей карте (см. ticker) —
         // видимые капли у камеры её не дублируют.
 
@@ -112,7 +131,7 @@ export class Main {
             urlWeather === "overcast" || urlWeather === "sunshower" ? urlWeather : "sunny";
         const weather = new Weather(clouds, rain, initialWeather);
         // Дебаг-хендл: потрогать погоду из консоли (window.__game).
-        (window as any).__game = { weather, clouds, rain, wetGround, trees, snake, viewport };
+        (window as any).__game = { weather, clouds, rain, wetGround, sandTrail, trees, snake, viewport, crates };
         const rings: Array<{ g: PIXI.Graphics; life: number; color: number }> = [];
         const floaters: Array<{ t: PIXI.Text; life: number }> = [];
 
@@ -225,6 +244,12 @@ export class Main {
         const MAGNET_RADIUS = 350; // еда подтягивается к голове с этого расстояния
         const EAT_PADDING = 60; // насколько «широк» рот относительно радиуса еды
 
+        // След на песке: штампуем сегменты раз в ~14px пути головы.
+        // Правее — зона растворения песка и трава, там след не кладём.
+        const TRAIL_MAX_X = SAND_WIDTH - 150;
+        const lastTrail = { x: -9999, y: -9999 };
+        const trailCircles: Array<{ x: number; y: number; r: number }> = [];
+
         this.app!.ticker.add((ticker: PIXI.Ticker) => {
             const delta = ticker.deltaTime;
             fpsTimer += delta;
@@ -237,10 +262,40 @@ export class Main {
             snake.setWetness(weather.wetness);
             wetGround.rainOverWorld(delta, rain.intensity); // мокнет вся карта
             wetGround.update(delta, rain.intensity < 0.03); // без дождя — сохнет
-            snake.move();
+            snake.move(delta);
             snake.drawCollider();
+
+            // След на песке: змейка продавливает дорожку, ветер её заметает.
+            const hw = snake.headWorld;
+            if (Math.hypot(hw.x - lastTrail.x, hw.y - lastTrail.y) > 14) {
+                lastTrail.x = hw.x;
+                lastTrail.y = hw.y;
+                trailCircles.length = 0;
+                snake.forEachCircle((x, y, r) => {
+                    if (x < TRAIL_MAX_X) trailCircles.push({ x, y, r });
+                });
+                sandTrail.stamp(trailCircles);
+            }
+            sandTrail.update(delta);
+
+            // Толкаемые тела (ящики и будущие подобные): змейка выталкивает,
+            // тела расталкиваются между собой и скользят с трением.
+            stepPushables(crates, snake, delta, viewport.worldWidth, viewport.worldHeight);
             const head = snake.headWorld;
             const headPoint = new PIXI.Point(head.x, head.y);
+
+            // Живая морда: глаза следят за ближайшей едой в зоне магнита,
+            // иначе смотрят по курсу; моргание и язычок — внутри updateFace.
+            let lookFood: PIXI.Point | null = null;
+            let lookDist = MAGNET_RADIUS * 1.3;
+            for (const food of foods) {
+                const d = logic.distanceBetweenPoints(headPoint, food.position);
+                if (d < lookDist) {
+                    lookDist = d;
+                    lookFood = food.position;
+                }
+            }
+            snake.updateFace(delta, lookFood);
 
             // Еда: магнит → поедание. Дропы после поедания исчезают, остальное респавнится.
             for (let i = foods.length - 1; i >= 0; i--) {
@@ -318,7 +373,8 @@ export class Main {
             );
             const targetZoom = Math.min(0.25, Math.max(minZoom, 0.25 - (snake.length - 30) * 0.0006));
             const currentZoom = viewport.scaled;
-            viewport.setZoom(currentZoom + (targetZoom - currentZoom) * 0.02, true);
+            // лерп зума в delta-времени — скорость наезда одинакова на любой герцовке
+            viewport.setZoom(currentZoom + (targetZoom - currentZoom) * Math.min(1, 0.055 * delta), true);
 
             viewport.follow(
                 // follow читает только x/y — полноценный Container не нужен
@@ -338,7 +394,10 @@ export class Main {
         this.app = new PIXI.Application();
         await this.app.init({
             resizeTo: window,
-            resolution: window.devicePixelRatio || 1,
+            // DPR капнут двойкой: на телефонах с DPR 3 рендер шёл бы в 2.25×
+            // больше пикселей — наши шейдеры земли/облаков этого не прощают,
+            // а разницы 2 vs 3 на маленьком экране не видно.
+            resolution: Math.min(window.devicePixelRatio || 1, 2),
             autoDensity: true, // high-DPI экраны
             backgroundColor: 0xf3f3f3,
             antialias: false,
@@ -361,6 +420,8 @@ export class Main {
 
         // Карта влажности — до мешей земли: шейдер песка сэмплит её для блика.
         this.wetGround = new WetGround(this.app.renderer, WORLD_WIDTH, WORLD_HEIGHT);
+        // След змейки: только песчаная зона (+ немного стыка, штампы туда не кладём).
+        this.sandTrail = new SandTrail(this.app.renderer, SAND_WIDTH + 800, WORLD_HEIGHT);
 
         // Фон из двух биомов (шейдер «untiling» — см. Ground.ts):
         // трава занимает правую часть и заходит под песок; песок лежит сверху
@@ -398,6 +459,20 @@ export class Main {
         );
         sand.position.set(-500, -500);
         background.addChild(sand); // поверх травы — кромка песка её перекрывает
+
+        // Микробиом «цветочный луг»: полоса тёмной травы с цветами вдоль
+        // нижнего края травяного биома. Верх и левый край растворяются
+        // шумной кромкой в обычную траву (правее стыка с песком).
+        const MEADOW_H = 2500;
+        const meadowX = SAND_WIDTH + 700;
+        const meadow = createGroundMesh(
+            PIXI.Assets.get("tileMeadow"),
+            WORLD_WIDTH + 500 - meadowX,
+            MEADOW_H + 500,
+            { top: 800, left: 900 }
+        );
+        meadow.position.set(meadowX, WORLD_HEIGHT - MEADOW_H);
+        background.addChild(meadow);
 
         this.viewport.addChild(background);
 
@@ -447,6 +522,7 @@ export class Main {
         // fake-рельеф из яркости ему не нужен (и не должен применяться дважды).
         // NB: filterArea не задаём — v8 сам ограничивает фильтр видимой областью.
         grass.filters = [grassLight];
+        meadow.filters = [grassLight]; // луг — та же трава, тот же fake-рельеф
 
         window.addEventListener("resize", this.onResize.bind(this));
 

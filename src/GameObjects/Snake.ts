@@ -49,7 +49,10 @@ export class Snake {
     private colliderVisible = false; // показывать тестовый коллайдер
     private points: Array<PIXI.Point>; // «позвоночник» — чистая логика следования
     private renderPoints: Array<PIXI.Point>; // позвоночник + синусоида, идёт в rope
-    private speed = 3;
+    // Скорость и руление — в единицах «на 60fps-кадр»: move() умножает на
+    // ticker.deltaTime, поэтому фактическая скорость не зависит от герцовки
+    // экрана (8×60 ≈ 480 px/с и на 60 Гц телефоне, и на 164 Гц мониторе).
+    private speed = 8;
     private sections = 30;
     private sectionLength = 20;
     private readonly headSkip = 8; // первые секции всегда рядом с головой — пропускаем
@@ -59,14 +62,25 @@ export class Snake {
     private wavePhase = 0;
     private waveAmplitude = 50; // макс. боковое смещение (px) у хвоста — размах
     private waveLength = 0.2; // фаза на сегмент: ~0.3 даёт читаемый S-изгиб тела
-    private waveSpeed = 0.045; // прирост фазы за кадр (скорость волны) — меньше = медленнее
-    // Рулёжка: текущий курс головы (рад) и макс. доворот за кадр.
-    // Лимит не даёт развернуться в себя напрямую — только дугой.
+    private waveSpeed = 0.12; // прирост фазы за 60fps-кадр (скорость волны)
+    // Рулёжка: текущий курс головы (рад) и макс. доворот за 60fps-кадр.
+    // Лимит не даёт развернуться в себя напрямую — только дугой
+    // (радиус дуги = speed/maxTurn ≈ 73 px).
     private headingAngle = Math.PI; // старт: смотрит вдоль -X (от хвоста)
-    private maxTurn = 0.04; // макс. изменение курса за кадр (рад): радиус дуги > длины тела
+    private maxTurn = 0.11;
     private direction!: ControlVector;
     // Границы мира в локальных координатах группы (голова не выходит за них).
     private bounds: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
+    // «Живая морда»: глаза и язык рисуются поверх головы (см. updateFace).
+    private eyesG!: PIXI.Graphics;
+    private tongueG!: PIXI.Graphics;
+    private blinkTimer = 150 + Math.random() * 300; // тиков до следующего моргания
+    private blinkPhase = -1; // <0 — глаза открыты, иначе — прогресс моргания
+    private saccadeTimer = 0; // микро-движения зрачков в «покое»
+    private saccadeX = 0;
+    private saccadeY = 0;
+    private tongueTimer = 200 + Math.random() * 300;
+    private tonguePhase = -1;
 
     constructor(private container: PIXI.Container, skin: SkinTextures) {
         this.points = this.calculatePoints();
@@ -83,6 +97,10 @@ export class Snake {
         this.buildBody(); // создаёт bodyRope под головой
         this.buildShadow(); // тень в самый низ группы
         this.group.addChild(this.headRope); // голова поверх тела
+        this.tongueG = new PIXI.Graphics(); // язык — под бликом, поверх головы
+        this.eyesG = new PIXI.Graphics();
+        this.group.addChild(this.tongueG);
+        this.group.addChild(this.eyesG);
         this.buildShine(); // блик — над всем
 
         this.colliderDebug = new PIXI.Graphics();
@@ -219,6 +237,142 @@ export class Snake {
         this.shineRope.blendMode = "add";
         this.shineRope.alpha = this.wetness * 0.55;
         this.group.addChild(this.shineRope); // поверх головы и тела
+        // Морда поверх блика: белки глаз не должны пересвечиваться ADD-бликом.
+        // buildShine зовётся последним во всех перестройках — здесь же
+        // возвращаем язык и глаза на самый верх группы.
+        if (this.tongueG) this.group.addChild(this.tongueG);
+        if (this.eyesG) this.group.addChild(this.eyesG);
+    }
+
+    // «Живая морда» — зовётся из тикера каждый кадр.
+    // Глаза: белки+зрачки поверх головы; зрачки смотрят по курсу, дёргаются
+    // микро-саккадами, а если рядом еда (lookWorld) — следят за ней. Изредка
+    // моргают. Язык периодически выстреливает вилкой из носа.
+    public updateFace(delta: number, lookWorld?: { x: number; y: number } | null): void {
+        const pts = this.renderPoints;
+        if (pts.length < 4) return;
+
+        // Позиция глаз: пропорции текстуры головы (см. SnakeSkin) в px мира —
+        // ~52px от носа вдоль хребта, ±25.6px от оси. Идём по дугам сегментов.
+        const EYE_DIST = 52;
+        const EYE_SIDE = 25.6;
+        let acc = 0;
+        let i = 0;
+        let segLen = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) || 1;
+        while (i < pts.length - 2 && acc + segLen < EYE_DIST) {
+            acc += segLen;
+            i++;
+            segLen = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y) || 1;
+        }
+        const t = (EYE_DIST - acc) / segLen;
+        const ax = pts[i].x + (pts[i + 1].x - pts[i].x) * t;
+        const ay = pts[i].y + (pts[i + 1].y - pts[i].y) * t;
+        // точки идут от носа к хвосту → вперёд = против сегмента
+        const fx = -(pts[i + 1].x - pts[i].x) / segLen;
+        const fy = -(pts[i + 1].y - pts[i].y) / segLen;
+
+        // Моргание: редкий быстрый цикл открыто→закрыто→открыто.
+        this.blinkTimer -= delta;
+        if (this.blinkTimer <= 0 && this.blinkPhase < 0) {
+            this.blinkPhase = 0;
+            this.blinkTimer = 180 + Math.random() * 340;
+        }
+        let open = 1;
+        if (this.blinkPhase >= 0) {
+            const BLINK_LEN = 14;
+            this.blinkPhase += delta;
+            open = Math.abs(Math.cos((Math.PI * this.blinkPhase) / BLINK_LEN));
+            if (this.blinkPhase >= BLINK_LEN) {
+                this.blinkPhase = -1;
+                open = 1;
+            }
+        }
+
+        // Саккады: зрачки в покое изредка перескакивают на новую точку.
+        this.saccadeTimer -= delta;
+        if (this.saccadeTimer <= 0) {
+            this.saccadeTimer = 50 + Math.random() * 160;
+            this.saccadeX = (Math.random() - 0.5) * 4;
+            this.saccadeY = (Math.random() - 0.5) * 4;
+        }
+
+        const WHITE_R = 12.65;
+        const PUPIL_R = 6.3;
+        const WANDER = WHITE_R - PUPIL_R - 1; // зрачок не вылазит из белка
+        const g = this.eyesG;
+        g.clear();
+        for (const side of [-1, 1]) {
+            const ex = ax - fy * EYE_SIDE * side;
+            const ey = ay + fx * EYE_SIDE * side;
+            // Куда смотрит зрачок: за едой, иначе по курсу + саккада.
+            let lx: number;
+            let ly: number;
+            if (lookWorld) {
+                lx = lookWorld.x - this.group.x - ex;
+                ly = lookWorld.y - this.group.y - ey;
+            } else {
+                lx = fx * 3 + this.saccadeX;
+                ly = fy * 3 + this.saccadeY;
+            }
+            const ll = Math.hypot(lx, ly) || 1;
+            const k = Math.min(WANDER, ll) / ll;
+
+            const r = Math.max(0.12, open); // моргание: глаз схлопывается
+            g.circle(ex, ey, WHITE_R * r).fill({ color: 0xffffff });
+            if (open > 0.25) {
+                g.circle(ex + lx * k, ey + ly * k, PUPIL_R * r).fill({ color: 0x1a1a2e });
+            }
+        }
+
+        // Язык: вилка из носа, выстрел ~полсекунды раз в несколько секунд.
+        this.tongueTimer -= delta;
+        if (this.tongueTimer <= 0 && this.tonguePhase < 0) {
+            this.tonguePhase = 0;
+            this.tongueTimer = 250 + Math.random() * 400;
+        }
+        const tg = this.tongueG;
+        tg.clear();
+        if (this.tonguePhase >= 0) {
+            const TONGUE_LEN = 30;
+            this.tonguePhase += delta;
+            if (this.tonguePhase >= TONGUE_LEN) this.tonguePhase = -1;
+            else {
+                const out = Math.sin((Math.PI * this.tonguePhase) / TONGUE_LEN);
+                const len = 36 * out;
+                if (len > 3) {
+                    const nose = pts[0];
+                    const nfx = -(pts[1].x - nose.x);
+                    const nfy = -(pts[1].y - nose.y);
+                    const nl = Math.hypot(nfx, nfy) || 1;
+                    const dx = nfx / nl;
+                    const dy = nfy / nl;
+                    const bx = nose.x + dx * 2;
+                    const by = nose.y + dy * 2;
+                    const mx = bx + dx * len * 0.6;
+                    const my = by + dy * len * 0.6;
+                    const stroke = { width: 4, color: 0xd63b4f, cap: "round" as const };
+                    tg.moveTo(bx, by).lineTo(mx, my).stroke(stroke);
+                    // вилка: два кончика в стороны
+                    for (const s of [-1, 1]) {
+                        tg.moveTo(mx, my)
+                            .lineTo(
+                                bx + dx * len - dy * 5 * s,
+                                by + dy * len + dx * 5 * s
+                            )
+                            .stroke(stroke);
+                    }
+                }
+            }
+        }
+    }
+
+    // Круги коллайдера всех сегментов в мировых координатах — для следа на
+    // песке и любых внешних взаимодействий с телом.
+    public forEachCircle(cb: (x: number, y: number, r: number, i: number) => void): void {
+        for (let i = 0; i < this.renderPoints.length; i++) {
+            const p = this.renderPoints[i];
+            cb(p.x + this.group.x, p.y + this.group.y, this.segmentRadius(i), i);
+        }
     }
 
     // Насколько змейка мокрая (0..1): блеск кожи. Зовёт Weather каждый тик.
@@ -246,10 +400,9 @@ export class Snake {
 
     // Накладываем боковую синусоиду на позвоночник → renderPoints (то, что рисует rope).
     // Смещение перпендикулярно телу, амплитуда растёт к хвосту, волна бежит вдоль тела.
-    private applyWave(spd: number): void {
-        // Скорость волны синхронизирована с текущей скоростью змейки:
-        // spd/speed = доля throttle (0..1). На месте (spd=0) волна замирает.
-        this.wavePhase += this.waveSpeed * (spd / this.speed);
+    private applyWave(throttle: number, delta: number): void {
+        // Скорость волны синхронизирована с газом (0..1): на месте волна замирает.
+        this.wavePhase += this.waveSpeed * throttle * delta;
         const n = this.points.length;
         for (let i = 0; i < n; i++) {
             const p = this.points[i];
@@ -350,8 +503,17 @@ export class Snake {
         return [];
     }
 
-    public move(): void {
-        // console.log("this.direction", this.direction);
+    // Прокатить все сегменты тела по толкаемому объекту: форму коллайдера
+    // знает сам объект (пример — квадратный Crate.pushCircle), змейка лишь
+    // отдаёт круги сегментов. Голова толкает заметно сильнее тела.
+    public pushBody(target: {
+        pushCircle(cx: number, cy: number, r: number, boost?: number): void;
+    }): void {
+        this.forEachCircle((x, y, r, i) => target.pushCircle(x, y, r, i === 0 ? 2.5 : 1));
+    }
+
+    // delta — ticker.deltaTime (1 = 60fps-кадр): движение не зависит от герцовки.
+    public move(delta = 1): void {
         if (typeof this.direction === 'undefined')
             return;
 
@@ -361,20 +523,21 @@ export class Snake {
         // console.log('moveDirection', move);
         let LastPoint: PIXI.Point = this.head.clone();
 
-        // Логика головы: доворачиваем курс к желаемому, но не больше maxTurn за кадр.
+        // Логика головы: доворачиваем курс к желаемому, но не больше maxTurn·delta.
         if (move.force > 0.001) {
             const desired = Math.atan2(-move.y, move.x);
+            const turn = this.maxTurn * delta;
             // разница курсов, нормализованная в [-π, π]
             let diff = Math.atan2(
                 Math.sin(desired - this.headingAngle),
                 Math.cos(desired - this.headingAngle)
             );
-            if (diff > this.maxTurn) diff = this.maxTurn;
-            else if (diff < -this.maxTurn) diff = -this.maxTurn;
+            if (diff > turn) diff = turn;
+            else if (diff < -turn) diff = -turn;
             this.headingAngle += diff;
         }
 
-        const spd: number = move.force * this.speed;
+        const spd: number = move.force * this.speed * delta;
         LastPoint.x += Math.cos(this.headingAngle) * spd;
         LastPoint.y += Math.sin(this.headingAngle) * spd;
 
@@ -401,7 +564,7 @@ export class Snake {
             LastPoint = point;
         }
 
-        this.applyWave(spd);
+        this.applyWave(move.force, delta);
     }
     public set directionSet (newDirection:ControlVector) {
         this.direction = newDirection;

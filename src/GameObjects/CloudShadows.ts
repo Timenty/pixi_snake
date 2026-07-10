@@ -1,4 +1,12 @@
-import { Mesh, MeshGeometry, Shader, UniformGroup } from "pixi.js";
+import {
+    Mesh,
+    MeshGeometry,
+    Renderer,
+    RenderTexture,
+    Shader,
+    Sprite,
+    UniformGroup,
+} from "pixi.js";
 
 /**
  * Параметры теней, которые можно плавно менять на лету (погода).
@@ -29,6 +37,9 @@ export interface CloudLayerOptions extends CloudParams {
     // Покачивание поля слоя A (амплитуда в ячейках шума; 0 = выкл) и частота.
     sway: number;
     swayFreq: number;
+    // Ширина RenderTexture, в которую считается поле (см. класс): тени мыльные
+    // по природе, низкое разрешение не видно, а фрагментная нагрузка падает.
+    rtWidth: number;
 }
 
 // Пороги подобраны по перцентилям поля (см. scratchpad/fbm_stats.js):
@@ -63,6 +74,7 @@ const DEFAULT_OPTIONS: CloudLayerOptions = {
     coreA: 0, // облака — плоская тень без ядра
     sway: 0, // облака не качаются — только дрейф
     swayFreq: 0.02,
+    rtWidth: 768, // мир 15.5k px → тексель ~20 px мира; облакам хватает с запасом
 };
 
 const PARAM_UNIFORM: Record<keyof CloudParams, string> = {
@@ -77,13 +89,20 @@ const PARAM_UNIFORM: Record<keyof CloudParams, string> = {
 
 /**
  * Плывущие тени облаков поверх игрового поля.
- * Меш на весь мир, в шейдере — fbm value-noise (аналог перлина).
- * Два слоя облаков: A — большие и медленные, B — поменьше и быстрее.
- * Внутри каждого слоя два подслоя шума дрейфуют с разной скоростью,
- * поэтому тени не «едут штампом», а медленно меняют форму.
+ * В шейдере — fbm value-noise (аналог перлина). Два слоя облаков:
+ * A — большие и медленные, B — поменьше и быстрее. Внутри каждого слоя два
+ * подслоя шума дрейфуют с разной скоростью, поэтому тени не «едут штампом»,
+ * а медленно меняют форму.
+ *
+ * Перф: fbm-меш НЕ рисуется на экран напрямую — каждый кадр рендерится в
+ * маленькую RenderTexture (rtWidth), а в сцене висит растянутый на мир спрайт
+ * (`view`). Тени мыльные — разницы не видно, зато fbm считается на ~400k
+ * пикселей вместо полного экрана (на мобилках это ×3-5 меньше).
  */
 export class CloudShadows {
-    public readonly mesh: Mesh<MeshGeometry, Shader>;
+    public readonly view: Sprite; // то, что добавляется в сцену
+    private mesh: Mesh<MeshGeometry, Shader>; // вне сцены, рисуется только в RT
+    private rt: RenderTexture;
     private cloudUniforms: UniformGroup;
     private time = 0;
     private transition: {
@@ -93,7 +112,12 @@ export class CloudShadows {
         durationTicks: number;
     } | null = null;
 
-    constructor(worldWidth: number, worldHeight: number, options?: Partial<CloudLayerOptions>) {
+    constructor(
+        private renderer: Renderer,
+        worldWidth: number,
+        worldHeight: number,
+        options?: Partial<CloudLayerOptions>
+    ) {
         const opts: CloudLayerOptions = { ...DEFAULT_OPTIONS, ...options };
 
         // Запас по краям — тени не «обрезаются» на границе мира.
@@ -252,7 +276,25 @@ export class CloudShadows {
 
         this.mesh = new Mesh<MeshGeometry, Shader>({ geometry, shader });
         this.mesh.eventMode = "none";
-        this.mesh.position.set(-pad, -pad);
+        // Меш сжимается в RT своим локальным scale (он не в сцене, transform
+        // больше ни на что не влияет), спрайт растягивает RT обратно на мир.
+        const rtW = Math.round(opts.rtWidth);
+        const rtH = Math.max(1, Math.round((rtW * h) / w));
+        this.mesh.scale.set(rtW / w, rtH / h);
+        this.rt = RenderTexture.create({ width: rtW, height: rtH });
+
+        this.view = new Sprite(this.rt);
+        this.view.width = w;
+        this.view.height = h;
+        this.view.position.set(-pad, -pad);
+        this.view.eventMode = "none";
+
+        this.renderField(); // первый кадр — до первого update
+    }
+
+    // Пересчитать поле в RT (clear:true — свежая RT не обязана быть чистой).
+    private renderField(): void {
+        this.renderer.render({ container: this.mesh, target: this.rt, clear: true });
     }
 
     private get uniforms(): Record<string, number | Float32Array> {
@@ -310,6 +352,8 @@ export class CloudShadows {
             }
             if (tr.progress >= 1) this.transition = null;
         }
+
+        this.renderField();
     }
 }
 
@@ -328,11 +372,15 @@ export const TREE_SHADOW_OPTIONS: Partial<CloudLayerOptions> = {
     darkB: 0,
     ambient: 0,
     edgeFade: 0.16, // роща — локальный патч, тень тает к краям меша
+    // Патч маленький (~4.6k px с запасом) — RT 384 даёт тексель ~12 px мира.
+    // NB: поле теперь считается каждый кадр независимо от видимости рощи —
+    // это ~150k px fbm, дешевле одного её появления в кадре напрямую.
+    rtWidth: 384,
 };
 
 export class TreeShadows extends CloudShadows {
-    constructor(worldWidth: number, worldHeight: number) {
-        super(worldWidth, worldHeight, {
+    constructor(renderer: Renderer, worldWidth: number, worldHeight: number) {
+        super(renderer, worldWidth, worldHeight, {
             ...TREE_SHADOW_OPTIONS,
             // Масштаб шума привязан к размеру меша: ячейка ~410 px —
             // кроны одинакового размера и у рощи 2500px, и на весь мир.

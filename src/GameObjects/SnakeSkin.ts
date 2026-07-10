@@ -246,18 +246,9 @@ function makeHeadTexture(opts: SkinOptions): PIXI.Texture {
 
     shade(ctx, W, H);
 
-    // Глаза сверху (top-down): белок + зрачок, симметрично по бокам.
-    // На вытянутой мордочке глаза сидят ближе к затылку.
-    for (const cy of [H * 0.3, H * 0.7]) {
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.arc(W * 0.36, cy, 9, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#1a1a2e";
-        ctx.beginPath();
-        ctx.arc(W * 0.33, cy, 4.5, 0, Math.PI * 2);
-        ctx.fill();
-    }
+    // Глаза здесь НЕ рисуем: они живые — Snake.updateFace рисует белки/зрачки
+    // поверх головы (следят за едой, моргают). Позиция глаз завязана на
+    // пропорции этой текстуры: ~u=0.36 по длине, ±0.2H от хребта.
     // Ноздри у носа.
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     for (const cy of [H * 0.42, H * 0.58]) {

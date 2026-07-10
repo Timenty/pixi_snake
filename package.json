@@ -5,6 +5,7 @@
     "scripts": {
         "type-check": "tsc --noEmit",
         "dev": "vite --port 1234",
+        "host": "vite --host",
         "build": "npm run type-check && vite build",
         "preview": "vite preview",
         "textures": "node scripts/prepare-ground-textures.js",
